@@ -15,7 +15,7 @@
 <h2>Messages</h2>
 <input id="search" class="search" placeholder="Search conversations">
 <div class="tabs"><button class="tab active" data-filter="all">Inbox</button><button class="tab" data-filter="unread">Unread</button><button class="tab" data-filter="archived">Archived</button></div>
-<div class="section-title"><span>⭐ Priority</span><span id="priorityCount" class="count">0</span></div>
+<div style="margin:10px 0;padding:11px;border:1px solid #f3d66d;border-radius:12px;background:#fff8df;font-size:12px"><b>Personal Messenger archive</b><p style="margin:6px 0">Import a Facebook Messenger JSON message file. Files stay in this browser session; no upload or live sync.</p><label style="display:block;background:#ffce2e;border-radius:9px;padding:9px;text-align:center;cursor:pointer;font-weight:bold">Import message JSON<input id="importJson" type="file" accept=".json,application/json" multiple hidden></label><div id="importStatus" role="status" style="margin-top:6px"></div></div><div class="section-title"><span>⭐ Priority</span><span id="priorityCount" class="count">0</span></div>
 <div id="priorityList"></div>
 <div class="section-title"><span>Inbox</span><span id="inboxCount" class="count">0</span></div>
 <div id="inboxList"></div>
@@ -34,14 +34,35 @@ const chats=[
 {id:3,name:'Contact Three',last:'Thank you!',time:'1h',priority:false,unread:0,archived:false,status:'Offline',messages:[['Thank you!',0]]},
 {id:4,name:'Archived Contact',last:'Talk soon.',time:'2d',priority:false,unread:0,archived:true,status:'Offline',messages:[['Talk soon.',0]]}
 ];
-let selected=1,filter='all';
+let selected=1,filter='all',archiveMode=false;
 const $=id=>document.getElementById(id);
+const safe=t=>String(t??'').replace(/[&<>"']/g,ch=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
+const decodeMeta=t=>{try{return decodeURIComponent(escape(t))}catch{return t}};
+$('importJson').addEventListener('change',async e=>{
+ const files=[...e.target.files];let imported=0,skipped=0;
+ for(const file of files){try{
+  if(file.size>15*1024*1024)throw Error('File too large (15 MB maximum)');
+  const data=JSON.parse(await file.text());
+  if(!Array.isArray(data.messages)||!Array.isArray(data.participants))throw Error('Not a Messenger message JSON file');
+  const participants=data.participants.map(p=>decodeMeta(p.name||'Unknown'));
+  const name=participants.join(', ')||'Imported conversation';
+  const msgs=data.messages.filter(m=>typeof m.content==='string'||Array.isArray(m.photos)).sort((a,b)=>(a.timestamp_ms||0)-(b.timestamp_ms||0));
+  const formatted=msgs.map(m=>[decodeMeta(m.content||'[Photo in exported archive]'),0,decodeMeta(m.sender_name||'Unknown')]);
+  if(!formatted.length)throw Error('No readable messages');
+  const id=chats.reduce((n,c)=>Math.max(n,c.id),0)+1;
+  chats.push({id,name,last:formatted.at(-1)[0],time:'Archive',priority:false,unread:0,archived:false,status:'Imported archive · read only',messages:formatted,imported:true});
+  selected=id;imported++;
+ }catch(err){skipped++;}}
+ archiveMode=imported>0||archiveMode;
+ $('importStatus').textContent=imported+' conversation file(s) imported'+(skipped?', '+skipped+' skipped':'')+'. No files uploaded.';
+ e.target.value='';render();
+});
 function visible(c){const q=$('search').value.trim().toLowerCase();if(q&&!c.name.toLowerCase().includes(q)&&!c.last.toLowerCase().includes(q))return false;if(filter==='unread')return c.unread>0&&!c.archived;if(filter==='archived')return c.archived;return !c.archived}
-function contactHTML(c){return `<div class="contact ${c.id===selected?'active':''}" data-id="${c.id}"><strong>${c.name}</strong><div class="preview"><span class="text">${c.last}</span><span>${c.time}</span></div><button class="star ${c.priority?'on':''}" data-star="${c.id}" title="Toggle priority">${c.priority?'★':'☆'}</button>${c.unread?`<span class="badge">${c.unread}</span>`:''}</div>`}
+function contactHTML(c){return `<div class="contact ${c.id===selected?'active':''}" data-id="${c.id}"><strong>${safe(c.name)}</strong><div class="preview"><span class="text">${safe(c.last)}</span><span>${c.time}</span></div><button class="star ${c.priority?'on':''}" data-star="${c.id}" title="Toggle priority">${c.priority?'★':'☆'}</button>${c.unread?`<span class="badge">${c.unread}</span>`:''}</div>`}
 function renderLists(){let list=chats.filter(visible);let p=list.filter(c=>c.priority),normal=list.filter(c=>!c.priority);$('priorityList').innerHTML=p.map(contactHTML).join('')||'<div class="empty">No priority chats</div>';$('inboxList').innerHTML=normal.map(contactHTML).join('')||'<div class="empty">No conversations here</div>';$('priorityCount').textContent=p.length;$('inboxCount').textContent=normal.length;document.querySelectorAll('.contact').forEach(el=>el.onclick=e=>{if(e.target.dataset.star)return;selected=+el.dataset.id;let c=chats.find(x=>x.id===selected);c.unread=0;render()});document.querySelectorAll('[data-star]').forEach(btn=>btn.onclick=e=>{e.stopPropagation();let c=chats.find(x=>x.id===+btn.dataset.star);c.priority=!c.priority;render()})}
-function renderChat(){let c=chats.find(x=>x.id===selected);if(!c)return;$('chatName').textContent=c.name;$('chatStatus').textContent=c.status;$('details').innerHTML=`Name: ${c.name}<br>Status: ${c.status}<br>Channel: Messenger-ready UI`;$('priorityToggle').textContent=c.priority?'★ Priority':'☆ Priority';$('priorityToggle').classList.toggle('on',c.priority);$('messages').innerHTML=c.messages.map(m=>`<div class="bubble ${m[1]?'mine':''}">${m[0]}</div>`).join('');$('messages').scrollTop=$('messages').scrollHeight}
-function render(){renderLists();renderChat()}
-$('search').oninput=renderLists;document.querySelectorAll('.tab').forEach(b=>b.onclick=()=>{filter=b.dataset.filter;document.querySelectorAll('.tab').forEach(x=>x.classList.toggle('active',x===b));renderLists()});$('priorityToggle').onclick=()=>{let c=chats.find(x=>x.id===selected);if(c){c.priority=!c.priority;render()}};$('form').onsubmit=e=>{e.preventDefault();let i=$('msg'),c=chats.find(x=>x.id===selected);if(c&&i.value.trim()){c.messages.push([i.value.trim(),1]);c.last=i.value.trim();c.time='now';i.value='';render()}};$('photo').onchange=e=>{let f=e.target.files[0],c=chats.find(x=>x.id===selected);if(f&&c){c.messages.push(['📷 Photo attached (preview)',1]);c.last='Sent a photo';c.time='now';render()}e.target.value=''};render();
+function renderChat(){let c=chats.find(x=>x.id===selected);if(!c)return;$('chatName').textContent=c.name;$('chatStatus').textContent=c.status;$('details').innerHTML=`Name: ${safe(c.name)}<br>Status: ${safe(c.status)}<br>Channel: Messenger-ready UI`;$('priorityToggle').textContent=c.priority?'★ Priority':'☆ Priority';$('priorityToggle').classList.toggle('on',c.priority);$('messages').innerHTML=c.messages.map(m=>`<div class="bubble ${m[1]?'mine':''}">${safe(c.imported?m[2]+': '+m[0]:m[0])}</div>`).join('');$('messages').scrollTop=$('messages').scrollHeight}
+function render(){renderLists();renderChat();const c=chats.find(x=>x.id===selected);$('msg').disabled=!!c?.imported;$('form').querySelector('button').disabled=!!c?.imported;$('photo').disabled=!!c?.imported;$('msg').placeholder=c?.imported?'Read-only archive · use Messenger to reply':'Type a message...'}
+$('search').oninput=renderLists;document.querySelectorAll('.tab').forEach(b=>b.onclick=()=>{filter=b.dataset.filter;document.querySelectorAll('.tab').forEach(x=>x.classList.toggle('active',x===b));renderLists()});$('priorityToggle').onclick=()=>{let c=chats.find(x=>x.id===selected);if(c){c.priority=!c.priority;render()}};$('form').onsubmit=e=>{e.preventDefault();let i=$('msg'),c=chats.find(x=>x.id===selected);if(c&&!c.imported&&i.value.trim()){c.messages.push([i.value.trim(),1]);c.last=i.value.trim();c.time='now';i.value='';render()}};$('photo').onchange=e=>{let f=e.target.files[0],c=chats.find(x=>x.id===selected);if(f&&c&&!c.imported){c.messages.push(['📷 Photo attached (preview)',1]);c.last='Sent a photo';c.time='now';render()}e.target.value=''};render();
 </script>
 </body>
 </html>
